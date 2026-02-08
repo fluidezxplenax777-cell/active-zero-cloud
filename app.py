@@ -4,66 +4,97 @@ import json
 import os
 from datetime import datetime
 
-# --- CONFIGURAÇÃO ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Active Zero", page_icon="⚡", layout="centered")
 st.title("⚡ ACTIVE ZERO CLOUD")
 st.caption(f"Mesquita/RJ | Sistema Operacional | {datetime.now().strftime('%d/%m/%Y')}")
 
-# --- MEMÓRIA BLINDADA (JSON) ---
+# --- 2. SISTEMA DE MEMÓRIA (COM AUTOCORREÇÃO) ---
 MEMORIA_FILE = "memoria_zero.json"
 
-def carregar():
+def carregar_memoria():
     if os.path.exists(MEMORIA_FILE):
         try:
             with open(MEMORIA_FILE, "r") as f:
-                return json.load(f)
-        except: return []
+                dados = json.load(f)
+                # Verifica se é uma lista válida
+                if isinstance(dados, list):
+                    return dados
+        except:
+            pass # Se der erro, retorna lista vazia
     return []
 
-def salvar():
-    with open(MEMORIA_FILE, "w") as f:
-        json.dump(st.session_state.messages, f)
+def salvar_memoria(historico):
+    try:
+        with open(MEMORIA_FILE, "w") as f:
+            json.dump(historico, f, indent=4)
+    except Exception as e:
+        st.error(f"Erro ao salvar memória: {e}")
 
+# Inicializa
 if "messages" not in st.session_state:
-    st.session_state.messages = carregar()
+    st.session_state.messages = carregar_memoria()
 
-# --- MOTOR ---
+# --- 3. CLIENTE GROQ ---
 if "GROQ_API_KEY" in st.secrets:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 else:
-    st.error("⚠️ Chave de Segurança Ausente!")
+    st.error("⚠️ ERRO: Chave API não configurada nos Secrets!")
     st.stop()
 
-# --- INTERFACE ---
+# --- 4. RENDERIZAÇÃO DO CHAT ---
+# Mostra mensagens antigas
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    # Filtro de segurança: Só mostra se tiver conteúdo de texto
+    if isinstance(msg.get("content"), str):
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-if prompt := st.chat_input("Comando para o Zero..."):
-    # Salva User
+# --- 5. LÓGICA DE INPUT E RESPOSTA ---
+if prompt := st.chat_input("Digite seu comando..."):
+    # 5.1. Exibe e Registra o Usuário
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Resposta IA
+    # 5.2. Gera a Resposta da IA
     with st.chat_message("assistant"):
+        placeholder = st.empty() # Espaço vazio para o texto crescer
+        full_response = ""
+        
         try:
+            # Solicita o stream
             stream = client.chat.completions.create(
-                messages=[{"role": m["role"], "content": m["content"]} for m in st.session_state.messages],
+                messages=[
+                    {"role": m["role"], "content": m["content"]} 
+                    for m in st.session_state.messages 
+                    if isinstance(m.get("content"), str) # Envia só o que é texto
+                ],
                 model="llama-3.1-8b-instant",
                 stream=True,
             )
-            response = st.write_stream(stream)
             
-            # Salva IA
-            st.session_state.messages.append({"role": "assistant", "content": response})
-            salvar()
-        except Exception as e:
-            st.error(f"Erro no Motor: {e}")
+            # 5.3. Loop Manual (Garante que é texto puro)
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    content_chunk = chunk.choices[0].delta.content
+                    full_response += content_chunk
+                    placeholder.markdown(full_response + "▌") # Efeito cursor
+            
+            placeholder.markdown(full_response) # Texto final limpo
+            
+            # 5.4. Salva APENAS O TEXTO (String)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            salvar_memoria(st.session_state.messages)
 
-# Menu Lateral
+        except Exception as e:
+            st.error(f"Falha na comunicação: {e}")
+
+# --- 6. BOTÃO DE EMERGÊNCIA (SIDEBAR) ---
 with st.sidebar:
-    if st.button("🗑️ Limpar Conversa"):
-        if os.path.exists(MEMORIA_FILE): os.remove(MEMORIA_FILE)
+    st.header("🛠️ Manutenção")
+    if st.button("🔴 RESET TOTAL (Corrigir Erros)"):
+        if os.path.exists(MEMORIA_FILE):
+            os.remove(MEMORIA_FILE)
         st.session_state.messages = []
         st.rerun()
