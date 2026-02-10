@@ -1,0 +1,23 @@
+name: ⚡ Protocolo Active Zero (Server Run)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  execucao_soberana:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: 🛠️ Configurar Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.10"
+        
+    - name: 🤖 Rodar Automação LIA (Teste de Fogo)
+      run: |
+        cd protocol_core
+        python automacao_bifi.py
